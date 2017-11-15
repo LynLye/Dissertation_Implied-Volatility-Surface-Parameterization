@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Nov 10 19:02:13 2017
+Created on Tue Oct 31 20:22:33 2017
 
-@author: lyn
+@author: ocs3
 """
 
 import numpy as np
 import pandas as pd
 from scipy import optimize
+import sys
+sys.path.append("..")
+import cal_implied_vol
 
-INTEREST_RATE = 0.04
+
+INTEREST_RATE = 0.025
 
 import sys
 # parameter boundary check
@@ -120,7 +124,7 @@ def solve_grad_get_score(p,x, vT,vega):
 
 #initial guess
 def inital_guess(df):
-    vT = df.Mkt_ImpVol * df.Mkt_ImpVol * df.Maturity
+    vT = df.MktImpliedVol * df.MktImpliedVol * df.Maturity
     abs_moneyness = abs(df.Moneyness)
     n = len(df.Maturity)
     if n <3:
@@ -138,8 +142,8 @@ def inital_guess(df):
         aInitial = aL + recurring 
         rhoInitial = 0 if bL == bR else (bL+bR)/(bR-bL)
         bInitial = 0.5*(bR-bL)
-        vol_min = df.Mkt_ImpVol.min()
-        mInitial = df[df.Mkt_ImpVol == vol_min]['Moneyness'].iloc[0]  
+        vol_min = df.MktImpliedVol.min()
+        mInitial = df[df.MktImpliedVol == vol_min]['Moneyness'].iloc[0]  
 #        mInitial = recurring/(bInitial * (rhoInitial-1.0))
         sigmaInitial_ = abs((-(vT.min()) + + aL + recurring) / (bInitial * np.sqrt( abs (1.0 - rhoInitial * rhoInitial))) )
         sigmaInitial = min(max(sigmaInitial_, 0.0),10)
@@ -147,20 +151,36 @@ def inital_guess(df):
 #print(inital_guess(item))              
         
     # perform calibration
-    def calibrate(df):
-        sigmaInitial, mInitial =  inital_guess(df)
-        vT = df.Mkt_ImpVol * df.Mkt_ImpVol * df.Maturity
-        res = optimize.minimize(solve_grad_get_score, [sigmaInitial, mInitial], args=(df.Moneyness, vT,df.vega), bounds=[(0.001, None), (None, None)])
-        assert res.success
-        S, M = res.x
-        a, d, c, _ = solve_grad(S, M, df.Moneyness, vT,df.vega)
-        #print(a, d, c)
-        T = df.Maturity.max() # should be the same for all rows
-        if c != 0 :
-            A, P, B = a / T, d / c, c /(S*T)
-        else:
-            A, P, B = a / T, 0, 0
-    #    print(A, P, B)
-        assert T >= 0 and S >= 0 and abs(P) <= 1
-    
-        return A, P, B, S, M
+def calibrate(df):
+    sigmaInitial, mInitial =  inital_guess(df)
+    vT = df.MktImpliedVol * df.MktImpliedVol * df.Maturity
+    res = optimize.minimize(solve_grad_get_score, [sigmaInitial, mInitial], args=(df.Moneyness, vT,df.vega), bounds=[(0.001, None), (None, None)])
+    assert res.success
+    S, M = res.x
+    a, d, c, _ = solve_grad(S, M, df.Moneyness, vT,df.vega)
+    #print(a, d, c)
+    T = df.Maturity.max() # should be the same for all rows
+    if c != 0 :
+        A, P, B = a / T, d / c, c /(S*T)
+    else:
+        A, P, B = a / T, 0, 0
+#    print(A, P, B)
+    assert T >= 0 and S >= 0 and abs(P) <= 1
+
+    return A, P, B, S, M
+
+
+if __name__ == '__main__':
+    import numpy as np
+    from data_process import *
+    import implied_vol_model.svi as svi
+    cal_implied_vol
+    data_read()
+    TIME_TEST = pd.datetime(2017,6,14,10,30,0,0)
+    data_process(TIME_TEST)
+    mkt_Option_Equity,option_set_by_maturity  = data_process_kind('ask', TIME_TEST)
+    item = option_set_by_maturity[0][['Maturity', 'F', 'Moneyness','MktImpliedVol']]
+    item['vega'] = 1
+    A, P, B, S, M = calibrate(item) 
+    svi_impl_vol = item.apply( lambda x: svi.SVI(A, P, B, S, M).SVI_vol(x.Moneyness), axis = 1)
+
